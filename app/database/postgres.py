@@ -1,6 +1,6 @@
+# app/database/postgres.py
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
-from contextlib import asynccontextmanager
 from app.core.config import settings
 
 engine = create_async_engine(
@@ -13,7 +13,6 @@ async_session = sessionmaker(
     engine, expire_on_commit=False, class_=AsyncSession
 )
 
-@asynccontextmanager
 async def get_db_session():
     """
     Provide a database session for dependency injection.
@@ -28,5 +27,3 @@ async def get_db_session():
         except Exception:
             await session.rollback()
             raise
-        finally:
-            await session.close()
