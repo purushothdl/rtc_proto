@@ -1,0 +1,9 @@
+2025-06-11 22:19:27,440 - app_logger - INFO - Request to /docs took 0.0000 seconds.
+2025-06-11 22:19:28,169 - app_logger - INFO - Request to /openapi.json took 0.0030 seconds.
+2025-06-11 22:19:34,715 - app_logger - INFO - Request to /api/auth/login took 2.0132 seconds.
+2025-06-11 22:19:51,355 - app_logger - INFO - Request to /api/auth/login took 0.4340 seconds.
+2025-06-11 22:19:53,042 - app_logger - INFO - Request to /api/auth/login took 0.3620 seconds.
+2025-06-11 22:19:54,136 - app_logger - INFO - Request to /api/auth/login took 0.3684 seconds.
+2025-06-11 22:19:55,328 - app_logger - INFO - Request to /api/auth/login took 0.3694 seconds.
+2025-06-11 22:19:56,427 - app_logger - INFO - Request to /api/auth/login took 0.3590 seconds.
+2025-06-11 22:19:57,615 - app_logger - INFO - Request to /api/auth/login took 0.3620 seconds.
