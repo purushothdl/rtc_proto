@@ -1,15 +1,12 @@
-from sqlalchemy import Column, UUID, ForeignKey, Text, DateTime, Enum
-from sqlalchemy.dialects.postgresql import UUID as PG_UUID
-from sqlalchemy.orm import relationship
 import uuid
-from datetime import datetime
 import enum
-from .base import Base
+from datetime import datetime
+from sqlalchemy.orm import relationship
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
+from sqlalchemy import Column, UUID, ForeignKey, Text, DateTime, Enum
 
-class MessageStatus(enum.Enum):
-    SENT = "sent"
-    DELIVERED = "delivered"
-    SEEN = "seen"
+from .base import Base
+from app.schemas.message import MessageStatus
 
 class Message(Base):
     __tablename__ = "messages"

@@ -2,7 +2,9 @@
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 from app.core.config import settings
+from app.models.base import Base
 
+# Create the async engine
 engine = create_async_engine(
     settings.database_url,
     echo=False,
@@ -17,8 +19,6 @@ async def get_db_session():
     """
     Provide a database session for dependency injection.
     
-    Yields:
-        AsyncSession for database operations
     """
     async with async_session() as session:
         try:
@@ -27,3 +27,10 @@ async def get_db_session():
         except Exception:
             await session.rollback()
             raise
+
+async def create_tables():
+    """
+    Create all database tables defined in SQLAlchemy models.
+    """
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)

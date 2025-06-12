@@ -11,12 +11,6 @@ from app.services.auth_service import AuthService
 
 security = HTTPBearer()
 
-def get_auth_service(db: AsyncSession = Depends(get_db_session)) -> AuthService:
-    """
-    Dependency that provides an instance of AuthService with an active database session.
-    """
-    return AuthService(db)
-
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),
     db: AsyncSession = Depends(get_db_session)
