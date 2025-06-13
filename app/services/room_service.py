@@ -2,13 +2,19 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, func, distinct
 from sqlalchemy.orm import selectinload
-from fastapi import HTTPException, status
 from typing import List
 from ..models.room import Room, RoomType
 from ..models.room_membership import RoomMembership
 from ..models.user import User
 from ..schemas.room import RoomResponse, CreateRoomRequest, CreatePrivateRoomRequest
 from ..database.postgres import get_db_session
+from ..core.exceptions import (
+    UserNotFoundException,
+    RoomNotFoundException,
+    RoomAlreadyExistsException,
+    UnauthorizedAccessException,
+    InternalServerErrorException,
+)
 
 class RoomService:
     def __init__(self, db: AsyncSession):
@@ -30,16 +36,27 @@ class RoomService:
             RoomResponse with created room details
 
         Raises:
-            HTTPException: If room creation fails
+            RoomAlreadyExistsException: If a room with the same name already exists
+            InternalServerErrorException: If room creation fails
         """
+        # Check if a room with the same name already exists
+        existing_room = await self.db.execute(
+            select(Room).filter(Room.name == request.name)
+        )
+        if existing_room.scalar():
+            raise RoomAlreadyExistsException(detail="Room with this name already exists")
+
         room = Room(
             name=request.name,
             created_by=user_id,
             room_type=RoomType.GROUP
         )
         self.db.add(room)
-        await self.db.commit()
-        await self.db.refresh(room)
+        try:
+            await self.db.commit()
+            await self.db.refresh(room)
+        except Exception as e:
+            raise InternalServerErrorException(detail="Failed to create room") from e
 
         # Add creator as a member
         membership = RoomMembership(
@@ -47,7 +64,10 @@ class RoomService:
             room_id=room.id
         )
         self.db.add(membership)
-        await self.db.commit()
+        try:
+            await self.db.commit()
+        except Exception as e:
+            raise InternalServerErrorException(detail="Failed to add user to room") from e
 
         return RoomResponse(
             id=room.id,
@@ -73,15 +93,13 @@ class RoomService:
             UUID of the private room
 
         Raises:
-            HTTPException: If user2_id doesn't exist
+            UserNotFoundException: If user2_id doesn't exist
+            InternalServerErrorException: If room creation fails
         """
         # Check if user2 exists
         user2 = await self.db.execute(select(User).filter(User.id == user2_id))
         if not user2.scalar():
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Target user not found"
-            )
+            raise UserNotFoundException(detail="Target user not found")
 
         # Check if private room already exists
         existing_room = await self.db.execute(
@@ -108,7 +126,10 @@ class RoomService:
             room_type=RoomType.PRIVATE
         )
         self.db.add(room)
-        await self.db.flush()
+        try:
+            await self.db.flush()
+        except Exception as e:
+            raise InternalServerErrorException(detail="Failed to create private room") from e
 
         # Add both users to the room
         memberships = [
@@ -116,8 +137,12 @@ class RoomService:
             RoomMembership(user_id=user2_id, room_id=room.id)
         ]
         self.db.add_all(memberships)
-        await self.db.commit()
-        return room
+        try:
+            await self.db.commit()
+        except Exception as e:
+            raise InternalServerErrorException(detail="Failed to add users to private room") from e
+
+        return room.id
 
     async def join_room(self, user_id: UUID, room_id: UUID) -> None:
         """
@@ -128,7 +153,10 @@ class RoomService:
             room_id: ID of the room
 
         Raises:
-            HTTPException: If room doesn't exist, is private, or user is already a member
+            RoomNotFoundException: If room doesn't exist
+            UnauthorizedAccessException: If room is private
+            RoomAlreadyExistsException: If user is already a member
+            InternalServerErrorException: If joining fails
         """
         # Check if room exists and is a group room
         room = await self.db.execute(
@@ -136,15 +164,9 @@ class RoomService:
         )
         room = room.scalar_one_or_none()
         if not room:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Room not found"
-            )
+            raise RoomNotFoundException(detail="Room not found")
         if room.room_type == RoomType.PRIVATE:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Cannot join private rooms"
-            )
+            raise UnauthorizedAccessException(detail="Cannot join private rooms")
 
         # Check if user is already a member
         membership = await self.db.execute(
@@ -156,10 +178,7 @@ class RoomService:
             )
         )
         if membership.scalar():
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="User is already a member of the room"
-            )
+            raise RoomAlreadyExistsException(detail="User is already a member of the room")
 
         # Add user to room
         membership = RoomMembership(
@@ -167,7 +186,10 @@ class RoomService:
             room_id=room_id
         )
         self.db.add(membership)
-        await self.db.commit()
+        try:
+            await self.db.commit()
+        except Exception as e:
+            raise InternalServerErrorException(detail="Failed to join room") from e
 
     async def get_user_rooms(self, user_id: UUID) -> List[RoomResponse]:
         """

@@ -2,14 +2,20 @@
 
 from fastapi import HTTPException, status
 
+##############################################################################
 # Base Exception
+##############################################################################
+
 class BaseAPIException(HTTPException):
     """Base class for all custom API exceptions."""
     def __init__(self, status_code: int, detail: str, headers: dict = None):
         super().__init__(status_code=status_code, detail=detail, headers=headers)
 
 
+##############################################################################
 # Authentication & Authorization Exceptions
+##############################################################################
+
 class InvalidCredentialsException(BaseAPIException):
     """Exception raised when credentials are invalid."""
     def __init__(self, detail="Invalid username or password"):
@@ -36,7 +42,10 @@ class InvalidTokenException(BaseAPIException):
         super().__init__(status_code=status.HTTP_401_UNAUTHORIZED, detail=detail)
 
 
+##############################################################################
 # User & Profile Exceptions
+##############################################################################
+
 class UserNotFoundException(BaseAPIException):
     """Exception raised when a user is not found."""
     def __init__(self, detail="User not found"):
@@ -48,7 +57,10 @@ class ProfileUpdateFailedException(BaseAPIException):
         super().__init__(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=detail)
 
 
+##############################################################################
 # Room & Chat Exceptions
+##############################################################################
+
 class RoomNotFoundException(BaseAPIException):
     """Exception raised when a room is not found."""
     def __init__(self, detail="Room not found"):
@@ -75,7 +87,10 @@ class MessageNotSentException(BaseAPIException):
         super().__init__(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=detail)
 
 
+##############################################################################
 # Notification & WebSocket Exceptions
+##############################################################################
+
 class NotificationFailedException(BaseAPIException):
     """Exception raised when a notification fails to send."""
     def __init__(self, detail="Notification could not be sent"):
@@ -87,7 +102,10 @@ class WebSocketConnectionException(BaseAPIException):
         super().__init__(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=detail)
 
 
+##############################################################################
 # Validation & Input Exceptions
+##############################################################################
+
 class ValidationException(BaseAPIException):
     """Exception raised for validation errors."""
     def __init__(self, detail="Input data validation failed"):
@@ -99,7 +117,10 @@ class InvalidInputException(BaseAPIException):
         super().__init__(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
 
 
+##############################################################################
 # Database & System Exceptions
+##############################################################################
+
 class DatabaseConnectionException(BaseAPIException):
     """Exception raised when a database connection fails."""
     def __init__(self, detail="Database connection failed"):

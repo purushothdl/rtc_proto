@@ -11,6 +11,12 @@ from ..models.user import User
 from ..schemas.message import MessageCreateRequest, MessageResponse
 from ..database.postgres import get_db_session
 from .room_service import RoomService
+from app.core.exceptions import (
+    RoomNotFoundException,
+    UnauthorizedAccessException,
+    MessageNotSentException,
+    UserNotFoundException
+)
 
 class ChatService:
     def __init__(self, room_service: RoomService, db: AsyncSession):
@@ -30,7 +36,6 @@ class ChatService:
             user_id: ID of the sender
             room_id: ID of the room
             content: Message content
-            message_type: Type of message
         """
         # Check if room exists and user is a member
         room = await self.db.execute(
@@ -46,16 +51,14 @@ class ChatService:
         )
         room = room.scalar_one_or_none()
         if not room:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Room not found or user is not a member"
-            )
+            raise RoomNotFoundException(detail="Room not found or user is not a member")
 
         # Get sender details
         sender = await self.db.execute(select(User).filter(User.id == user_id))
-        sender = sender.scalar_one()
+        sender = sender.scalar_one_or_none()
+        if not sender:
+            raise UserNotFoundException(detail="Sender not found")
 
-        # Create message
         message = Message(
             room_id=room_id,
             sender_id=user_id,
@@ -63,8 +66,11 @@ class ChatService:
             status=MessageStatus.SENT
         )
         self.db.add(message)
-        await self.db.commit()
-        await self.db.refresh(message)
+        try:
+            await self.db.commit()
+            await self.db.refresh(message)
+        except Exception as e:
+            raise MessageNotSentException(detail="Failed to send message") from e
 
         return MessageResponse(
             id=message.id,
@@ -108,7 +114,6 @@ class ChatService:
             sender_id: ID of the sender
             target_user_id: ID of the recipient
             content: Message content
-            message_type: Type of message
         """
         # Create or get private room
         room_id = await self.room_service.create_private_room(
@@ -149,10 +154,7 @@ class ChatService:
             )
         )
         if not membership.scalar():
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="User is not a member of the room"
-            )
+            raise UnauthorizedAccessException(detail="User is not a member of the room")
 
         # Fetch messages with sender details
         messages = await self.db.execute(

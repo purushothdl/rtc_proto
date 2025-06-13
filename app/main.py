@@ -9,13 +9,13 @@ from app.core.exceptions import BaseAPIException
 from app.api.auth import router as auth_router
 from app.api.rooms import router as room_router
 from app.api.messages import router as message_router
+from app.database.postgres import initialize_db
 from app.utils.timing_middleware import TimingMiddleware
-from app.database.postgres import create_tables
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await create_tables()  
-    yield  
+    await initialize_db()
+    yield
 
 app = FastAPI(lifespan=lifespan)
 

@@ -28,9 +28,10 @@ async def get_db_session():
             await session.rollback()
             raise
 
-async def create_tables():
+async def initialize_db():
     """
-    Create all database tables defined in SQLAlchemy models.
+    Initialize the database by creating all tables defined in SQLAlchemy models.
+    This method is idempotent and safe to run at startup.
     """
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
