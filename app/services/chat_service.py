@@ -4,11 +4,13 @@ from sqlalchemy import select, and_
 from sqlalchemy.orm import selectinload
 from fastapi import HTTPException, status
 from typing import List
+
+from app.schemas.room import RoomType
 from ..models.message import Message, MessageStatus
 from ..models.room_membership import RoomMembership
 from ..models.room import Room
 from ..models.user import User
-from ..schemas.message import MessageCreateRequest, MessageResponse
+from ..schemas.message import MessageCreateRequest, MessageResponse, MessageType
 from ..database.postgres import get_db_session
 from .room_service import RoomService
 from app.core.exceptions import (
@@ -28,6 +30,9 @@ class ChatService:
         user_id: UUID,
         room_id: UUID,
         content: str,
+        message_type: MessageType = MessageType.TEXT,
+        recipient_id: UUID = None,
+        is_private: bool = False,
     ) -> MessageResponse:
         """
         Helper method to validate and send a message.
@@ -36,6 +41,9 @@ class ChatService:
             user_id: ID of the sender
             room_id: ID of the room
             content: Message content
+            message_type: Type of message (text, image, file, etc.)
+            recipient_id: ID of the recipient (for private messages)
+            is_private: Whether the message is private
         """
         # Check if room exists and user is a member
         room = await self.db.execute(
@@ -63,7 +71,10 @@ class ChatService:
             room_id=room_id,
             sender_id=user_id,
             content=content,
-            status=MessageStatus.SENT
+            message_type=message_type,
+            status=MessageStatus.SENT,
+            recipient_id=recipient_id,
+            is_private=is_private,
         )
         self.db.add(message)
         try:
@@ -79,8 +90,11 @@ class ChatService:
             sender_username=sender.username,
             sender_display_name=sender.display_name,
             content=message.content,
-            status=message.status.value,
-            timestamp=message.timestamp
+            status=message.status,
+            timestamp=message.created_at,
+            message_type=message.message_type,
+            is_edited=message.is_edited,
+            is_deleted=message.is_deleted,
         )
 
     async def send_message(
@@ -89,16 +103,25 @@ class ChatService:
         request: MessageCreateRequest,
     ) -> MessageResponse:
         """
-        Send a message to an existing room (group or private).
+        Send a message to an existing group room.
 
         Args:
             user_id: ID of the sender
             request: Message creation request with room_id
         """
+        room = await self.db.execute(select(Room).filter(Room.id == request.room_id))
+        room = room.scalar_one_or_none()
+        if not room:
+            raise RoomNotFoundException(detail="Room not found")
+        if room.room_type == RoomType.PRIVATE:
+            raise UnauthorizedAccessException(detail="Cannot send group messages to private rooms")
+
         return await self._validate_and_send_message(
             user_id=user_id,
             room_id=request.room_id,
             content=request.content,
+            message_type=request.message_type,
+            is_private=False,
         )
 
     async def send_private_message(
@@ -106,6 +129,7 @@ class ChatService:
         sender_id: UUID,
         target_user_id: UUID,
         content: str,
+        message_type: MessageType = MessageType.TEXT,
     ) -> MessageResponse:
         """
         Send a message to another user, creating a private room if needed.
@@ -115,17 +139,17 @@ class ChatService:
             target_user_id: ID of the recipient
             content: Message content
         """
-        # Create or get private room
-        room_id = await self.room_service.create_private_room(
+        room = await self.room_service.create_private_room(
             user1_id=sender_id,
             user2_id=target_user_id,
         )
 
-        # Send message to the room
         return await self._validate_and_send_message(
             user_id=sender_id,
-            room_id=room_id,
+            room_id=room.id,
             content=content,
+            message_type=message_type,
+            is_private=True,
         )
 
     async def get_room_messages(
@@ -161,7 +185,7 @@ class ChatService:
             select(Message)
             .options(selectinload(Message.sender))
             .filter(Message.room_id == room_id)
-            .order_by(Message.timestamp.desc())
+            .order_by(Message.created_at.desc())
             .limit(limit)
             .offset(offset)
         )
@@ -175,8 +199,11 @@ class ChatService:
                 sender_username=msg.sender.username,
                 sender_display_name=msg.sender.display_name,
                 content=msg.content,
-                status=msg.status.value,
-                timestamp=msg.timestamp
+                status=msg.status,
+                timestamp=msg.created_at,
+                message_type=msg.message_type,
+                is_edited=msg.is_edited,
+                is_deleted=msg.is_deleted,
             )
             for msg in reversed(messages)
         ]

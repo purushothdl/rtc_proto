@@ -81,7 +81,7 @@ class RoomService:
         self,
         user1_id: UUID,
         user2_id: UUID,
-    ) -> UUID:
+    ) -> Room:
         """
         Create or get an existing private room between two users.
 
@@ -90,7 +90,7 @@ class RoomService:
             user2_id: ID of the second user
 
         Returns:
-            UUID of the private room
+            Room object representing the private room
 
         Raises:
             UserNotFoundException: If user2_id doesn't exist
@@ -117,7 +117,7 @@ class RoomService:
         )
         room = existing_room.scalar_one_or_none()
         if room:
-            return room.id
+            return room
 
         # Create new private room
         room = Room(
@@ -142,7 +142,7 @@ class RoomService:
         except Exception as e:
             raise InternalServerErrorException(detail="Failed to add users to private room") from e
 
-        return room.id
+        return room
 
     async def join_room(self, user_id: UUID, room_id: UUID) -> None:
         """

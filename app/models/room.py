@@ -1,18 +1,22 @@
-from sqlalchemy import Column, UUID, String, ForeignKey, DateTime, Enum
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, Enum
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
-import uuid
-import enum
-from datetime import datetime
-from .base import Base
+from sqlalchemy.orm import relationship
+from sqlalchemy.sql import func
+from app.models.base import Base
+from app.schemas.room import RoomType
 
-class RoomType(enum.Enum):
-    GROUP = "group"
-    PRIVATE = "private"
 
 class Room(Base):
     __tablename__ = "rooms"
-    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    name = Column(String(100), nullable=True)  # Nullable for private rooms
+    
+    name = Column(String(100), nullable=True)  
+    room_type = Column(Enum(RoomType), default=RoomType.GROUP)  
     created_by = Column(PG_UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
-    room_type = Column(Enum(RoomType), nullable=False, default=RoomType.GROUP)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    # Relationships
+    messages = relationship("Message", back_populates="room")
+    memberships = relationship("RoomMembership", back_populates="room")
+    
+    def __repr__(self):
+        return f"<Room(id={self.id}, name='{self.name}', type='{self.room_type}')>"

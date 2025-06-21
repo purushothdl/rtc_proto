@@ -1,155 +1,163 @@
-# app/utils/websocket_manager.py
-from fastapi import WebSocket
-from typing import Dict, List, Optional
+import asyncio
 import json
-import logging
-import uuid
-from app.database.redis import redis_manager
-from app.models.user import User
+from typing import Dict, Set
+from uuid import UUID
+from fastapi import WebSocket
+import redis.asyncio as redis
 
-logger = logging.getLogger(__name__)
+# This channel is used to keep the pubsub connection alive and listening.
+DUMMY_CHANNEL = "server-control-channel"
 
-class WebSocketManager:
-    def __init__(self):
-        # In-memory storage for active WebSocket connections
-        # Key: connection_id, Value: WebSocket instance
+def get_room_channel(room_id: str) -> str:
+    """Returns the Redis channel name for a specific room."""
+    return f"room:{room_id}"
+
+def get_user_channel(user_id: str) -> str:
+    """Returns the Redis channel name for a specific user."""
+    return f"user:{user_id}"
+
+class WebsocketManager:
+    """
+    Manages WebSocket connections, room memberships, and Redis Pub/Sub messaging
+    for real-time communication. This class is designed to be a singleton
+    instance within the FastAPI application.
+    """
+
+    def __init__(self, redis_url: str):
+        self.redis_url = redis_url
+        self.redis_client: redis.Redis = None
+        self.pubsub = None
+        self.listener_task: asyncio.Task = None
+
         self.active_connections: Dict[str, WebSocket] = {}
-        # Key: user_id, Value: connection_id
-        self.user_connections: Dict[int, str] = {}
-    
-    def generate_connection_id(self) -> str:
-        """Generate unique connection ID"""
-        return str(uuid.uuid4())
-    
-    async def connect(self, websocket: WebSocket, user: User, room_ids: List[int] = None) -> str:
-        """Accept WebSocket connection and register user"""
-        await websocket.accept()
-        
-        connection_id = self.generate_connection_id()
-        
-        # Store connection locally
-        self.active_connections[connection_id] = websocket
-        self.user_connections[user.id] = connection_id
-        
-        # Store in Redis for multi-server scenarios
-        await redis_manager.set_user_connection(user.id, connection_id, room_ids or [])
-        
-        # Add user to their rooms
-        if room_ids:
-            for room_id in room_ids:
-                await redis_manager.add_user_to_room(room_id, user.id)
-        
-        logger.info(f"User {user.id} connected with connection_id: {connection_id}")
-        return connection_id
-    
-    async def disconnect(self, user_id: int):
-        """Disconnect user and cleanup"""
-        connection_id = self.user_connections.get(user_id)
-        if not connection_id:
-            return
-        
-        # Get user's room info before cleanup
-        user_connection_info = await redis_manager.get_user_connection(user_id)
-        room_ids = user_connection_info.get("room_ids", []) if user_connection_info else []
-        
-        # Remove from local storage
-        self.active_connections.pop(connection_id, None)
-        self.user_connections.pop(user_id, None)
-        
-        # Remove from Redis
-        await redis_manager.remove_user_connection(user_id)
-        await redis_manager.cleanup_user_rooms(user_id, room_ids)
-        
-        logger.info(f"User {user_id} disconnected")
-    
-    async def send_personal_message(self, message: dict, user_id: int):
-        """Send message to a specific user"""
-        connection_id = self.user_connections.get(user_id)
-        if connection_id and connection_id in self.active_connections:
-            websocket = self.active_connections[connection_id]
-            try:
-                await websocket.send_text(json.dumps(message))
-                return True
-            except Exception as e:
-                logger.error(f"Failed to send message to user {user_id}: {e}")
-                # Connection might be broken, cleanup
-                await self.disconnect(user_id)
-                return False
-        return False
-    
-    async def send_room_message(self, message: dict, room_id: int, exclude_user_id: Optional[int] = None):
-        """Send message to all users in a room"""
-        room_users = await redis_manager.get_room_users(room_id)
-        
-        sent_count = 0
-        for user_id in room_users:
-            if exclude_user_id and user_id == exclude_user_id:
-                continue
-            
-            if await self.send_personal_message(message, user_id):
-                sent_count += 1
-        
-        logger.info(f"Sent room message to {sent_count} users in room {room_id}")
-        return sent_count
-    
-    async def send_private_message(self, message: dict, sender_id: int, recipient_id: int):
-        """Send private message between two users"""
-        # Send to both sender and recipient
-        results = []
-        for user_id in [sender_id, recipient_id]:
-            result = await self.send_personal_message(message, user_id)
-            results.append(result)
-        
-        return all(results)
-    
-    async def join_room(self, user_id: int, room_id: int):
-        """Add user to a room"""
-        await redis_manager.add_user_to_room(room_id, user_id)
-        
-        # Update user's room list in Redis
-        user_connection_info = await redis_manager.get_user_connection(user_id)
-        if user_connection_info:
-            room_ids = user_connection_info.get("room_ids", [])
-            if room_id not in room_ids:
-                room_ids.append(room_id)
-                await redis_manager.set_user_connection(
-                    user_id, 
-                    user_connection_info["connection_id"], 
-                    room_ids
-                )
-        
-        logger.info(f"User {user_id} joined room {room_id}")
-    
-    async def leave_room(self, user_id: int, room_id: int):
-        """Remove user from a room"""
-        await redis_manager.remove_user_from_room(room_id, user_id)
-        
-        # Update user's room list in Redis
-        user_connection_info = await redis_manager.get_user_connection(user_id)
-        if user_connection_info:
-            room_ids = user_connection_info.get("room_ids", [])
-            if room_id in room_ids:
-                room_ids.remove(room_id)
-                await redis_manager.set_user_connection(
-                    user_id, 
-                    user_connection_info["connection_id"], 
-                    room_ids
-                )
-        
-        logger.info(f"User {user_id} left room {room_id}")
-    
-    async def get_active_users_count(self) -> int:
-        """Get count of active users"""
-        return len(self.user_connections)
-    
-    async def get_room_users_count(self, room_id: int) -> int:
-        """Get count of active users in a room"""
-        room_users = await redis_manager.get_room_users(room_id)
-        return len(room_users)
-    
-    def is_user_connected(self, user_id: int) -> bool:
-        """Check if user is currently connected"""
-        return user_id in self.user_connections
+        self.local_room_members: Dict[str, Set[str]] = {}
 
-# Global WebSocket manager instance
-websocket_manager = WebSocketManager()
+    async def init_redis(self):
+        """Initializes Redis client and starts the Pub/Sub listener task."""
+        try:
+            print(f"Attempting to connect to Redis at {self.redis_url}")
+            self.redis_client = redis.from_url(
+                self.redis_url, encoding="utf-8", decode_responses=True
+            )
+            await self.redis_client.ping()
+            print("Redis connection successful.")
+        except Exception as e:
+            print(f"!!! CRITICAL: FAILED TO CONNECT TO REDIS: {e}")
+            raise e
+
+        self.pubsub = self.redis_client.pubsub()
+        # Subscribing to a dummy channel prevents the listener from blocking
+        # if no other channels are subscribed to yet.
+        await self.pubsub.subscribe(DUMMY_CHANNEL)
+        self.listener_task = asyncio.create_task(self._pubsub_listener())
+
+    async def close(self):
+        """Closes all connections and stops the listener task."""
+        if self.listener_task:
+            self.listener_task.cancel()
+        if self.pubsub:
+            await self.pubsub.unsubscribe()
+            await self.pubsub.close()
+        if self.redis_client:
+            await self.redis_client.close()
+        print("WebsocketManager resources closed.")
+
+    async def connect(self, websocket: WebSocket, user_id: UUID):
+        """Accepts a new WebSocket connection for a user."""
+        await websocket.accept()
+        user_id_str = str(user_id)
+        self.active_connections[user_id_str] = websocket
+        await self.pubsub.subscribe(get_user_channel(user_id_str))
+        print(f"User {user_id_str} connected. Subscribed to personal channel.")
+
+    async def disconnect(self, user_id: UUID):
+        """Handles a user's disconnection, cleaning up all memberships."""
+        user_id_str = str(user_id)
+        if user_id_str in self.active_connections:
+            del self.active_connections[user_id_str]
+            await self.pubsub.unsubscribe(get_user_channel(user_id_str))
+        
+        # Clean up local room tracking
+        rooms_to_unsubscribe = []
+        for room_id, members in self.local_room_members.items():
+            if user_id_str in members:
+                members.discard(user_id_str)
+                if not members:
+                    rooms_to_unsubscribe.append(room_id)
+        
+        for room_id in rooms_to_unsubscribe:
+            del self.local_room_members[room_id]
+            await self.pubsub.unsubscribe(get_room_channel(room_id))
+            print(f"Unsubscribed from room {room_id} channel (no local members left).")
+
+        print(f"User {user_id_str} disconnected.")
+
+    async def join_room(self, user_id: UUID, room_id: UUID):
+        """Adds a user to a room's local tracking and subscribes to the room channel if necessary."""
+        user_id_str, room_id_str = str(user_id), str(room_id)
+        if room_id_str not in self.local_room_members or not self.local_room_members[room_id_str]:
+            await self.pubsub.subscribe(get_room_channel(room_id_str))
+            print(f"This instance subscribed to room {room_id_str} channel.")
+        
+        self.local_room_members.setdefault(room_id_str, set()).add(user_id_str)
+        print(f"User {user_id_str} joined room {room_id_str}.")
+
+    async def leave_room(self, user_id: UUID, room_id: UUID):
+        """Removes a user from a room's local tracking and unsubscribes if they were the last one."""
+        user_id_str, room_id_str = str(user_id), str(room_id)
+        if room_id_str in self.local_room_members:
+            self.local_room_members[room_id_str].discard(user_id_str)
+            if not self.local_room_members[room_id_str]:
+                del self.local_room_members[room_id_str]
+                await self.pubsub.unsubscribe(get_room_channel(room_id_str))
+                print(f"This instance unsubscribed from room {room_id_str} channel.")
+        print(f"User {user_id_str} left room {room_id_str}.")
+
+    async def broadcast_to_room(self, room_id: UUID, message: str):
+        """Publishes a message to a room's Redis channel for all instances to hear."""
+        await self.redis_client.publish(get_room_channel(str(room_id)), message)
+
+    async def send_personal_message(self, user_id: UUID, message: str):
+        """Publishes a message to a specific user's Redis channel."""
+        await self.redis_client.publish(get_user_channel(str(user_id)), message)
+
+    async def _send_to_local_websocket(self, user_id: str, message: str):
+        """Sends a message directly to a websocket connected to this instance."""
+        if user_id in self.active_connections:
+            websocket = self.active_connections[user_id]
+            try:
+                await websocket.send_text(message)
+            except Exception:
+                pass
+
+    async def _pubsub_listener(self):
+        """Listens for messages on Redis and routes them to the correct local clients."""
+        print("Pub/Sub listener started.")
+        try:
+            async for message in self.pubsub.listen():
+                if message["type"] != "message" or message["channel"] == DUMMY_CHANNEL:
+                    continue
+
+                channel = message["channel"]
+                data = message["data"]
+                
+                if channel.startswith("room:"):
+                    room_id = channel.split(":", 1)[1]
+                    if room_id in self.local_room_members:
+                        # Broadcast to all users in the room connected to THIS instance
+                        tasks = [
+                            self._send_to_local_websocket(user_id, data)
+                            for user_id in self.local_room_members[room_id]
+                        ]
+                        await asyncio.gather(*tasks)
+
+                elif channel.startswith("user:"):
+                    user_id = channel.split(":", 1)[1]
+                    await self._send_to_local_websocket(user_id, data)
+
+        except asyncio.CancelledError:
+            print("Pub/Sub listener task cancelled.")
+        except Exception as e:
+            print(f"!!! CRITICAL: Pub/Sub listener crashed: {e}")
+        finally:
+            print("Pub/Sub listener stopped.")

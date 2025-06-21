@@ -54,6 +54,7 @@ async def send_private_message(
         sender_id=current_user.id,
         target_user_id=request.target_user_id,
         content=request.content,
+        message_type=request.message_type,
     )
 
 @router.get("/rooms/{room_id}", response_model=List[MessageResponse])

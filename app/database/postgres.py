@@ -4,7 +4,6 @@ from sqlalchemy.orm import sessionmaker
 from app.core.config import settings
 from app.models.base import Base
 
-# Create the async engine
 engine = create_async_engine(
     settings.database_url,
     echo=False,
