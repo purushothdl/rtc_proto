@@ -1,5 +1,4 @@
 import asyncio
-import json
 from typing import Dict, Set
 from uuid import UUID
 from fastapi import WebSocket
@@ -7,6 +6,7 @@ import redis.asyncio as redis
 
 # This channel is used to keep the pubsub connection alive and listening.
 DUMMY_CHANNEL = "server-control-channel"
+
 
 def get_room_channel(room_id: str) -> str:
     """Returns the Redis channel name for a specific room."""
@@ -29,6 +29,8 @@ class WebsocketManager:
         self.pubsub = None
         self.listener_task: asyncio.Task = None
 
+        self.ONLINE_USERS_KEY = "online_users"
+
         self.active_connections: Dict[str, WebSocket] = {}
         self.local_room_members: Dict[str, Set[str]] = {}
 
@@ -46,8 +48,6 @@ class WebsocketManager:
             raise e
 
         self.pubsub = self.redis_client.pubsub()
-        # Subscribing to a dummy channel prevents the listener from blocking
-        # if no other channels are subscribed to yet.
         await self.pubsub.subscribe(DUMMY_CHANNEL)
         self.listener_task = asyncio.create_task(self._pubsub_listener())
 
@@ -67,8 +67,12 @@ class WebsocketManager:
         await websocket.accept()
         user_id_str = str(user_id)
         self.active_connections[user_id_str] = websocket
+
         await self.pubsub.subscribe(get_user_channel(user_id_str))
         print(f"User {user_id_str} connected. Subscribed to personal channel.")
+
+        await self.redis_client.sadd(self.ONLINE_USERS_KEY, str(user_id))
+        print(f"User {user_id_str} added to global online set.")
 
     async def disconnect(self, user_id: UUID):
         """Handles a user's disconnection, cleaning up all memberships."""
@@ -91,6 +95,13 @@ class WebsocketManager:
             print(f"Unsubscribed from room {room_id} channel (no local members left).")
 
         print(f"User {user_id_str} disconnected.")
+
+        await self.redis_client.srem(self.ONLINE_USERS_KEY, str(user_id))
+        print(f"User {user_id_str} removed from global online set.")
+
+    async def get_globally_online_users(self) -> set[str]:
+        """Returns a set of user IDs that are currently connected via WebSocket."""
+        return await self.redis_client.smembers(self.ONLINE_USERS_KEY)
 
     async def join_room(self, user_id: UUID, room_id: UUID):
         """Adds a user to a room's local tracking and subscribes to the room channel if necessary."""

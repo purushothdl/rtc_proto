@@ -14,3 +14,6 @@ pytest-asyncio==1.0.0
 aiosqlite==0.21.0
 psycopg2==2.9.10
 redis[hiredis]
+websockets>=12.0
+google-auth==2.35.0
+requests==2.32.4

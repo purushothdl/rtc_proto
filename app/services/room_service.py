@@ -3,10 +3,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, func, distinct
 from sqlalchemy.orm import selectinload
 from typing import List
+from sqlalchemy.orm import contains_eager
+from ..models.message import Message
 from ..models.room import Room, RoomType
 from ..models.room_membership import RoomMembership
 from ..models.user import User
-from ..schemas.room import RoomResponse, CreateRoomRequest, CreatePrivateRoomRequest
+from ..schemas.room import RoomMemberResponse, RoomResponse, CreateRoomRequest, CreatePrivateRoomRequest
 from ..database.postgres import get_db_session
 from ..core.exceptions import (
     UserNotFoundException,
@@ -96,6 +98,45 @@ class RoomService:
             UserNotFoundException: If user2_id doesn't exist
             InternalServerErrorException: If room creation fails
         """
+
+        if user1_id == user2_id:
+            
+            # We need to find if this user already has a special "self-chat" room.
+            # A correct self-chat room is private and has ONLY ONE member.
+            self_chat_query = (
+                select(Room)
+                .join(RoomMembership)
+                .filter(
+                    and_(
+                        Room.room_type == RoomType.PRIVATE,
+                        RoomMembership.user_id == user1_id
+                    )
+                )
+                .group_by(Room.id)
+                .having(func.count(RoomMembership.user_id) == 1) # Crucial: ensures it's not a broken 2-person room
+            )
+            
+            # Execute the query. .scalar_one_or_none() safely gets the result
+            # if there's one room, or None if there are zero.
+            existing_self_chat = await self.db.execute(self_chat_query)
+            room = existing_self_chat.scalar_one_or_none()
+
+            # If we found the existing "self-chat" room, we're done. Return it.
+            if room:
+                return room
+            
+            # If no "self-chat" room exists, we create one now.
+            room = Room(name=None, created_by=user1_id, room_type=RoomType.PRIVATE)
+            self.db.add(room)
+            await self.db.flush() # This sends the INSERT to the DB and gets us the new room.id
+            
+            # IMPORTANT: We add only ONE membership record for the user.
+            membership = RoomMembership(user_id=user1_id, room_id=room.id)
+            self.db.add(membership)
+            
+            await self.db.commit() # Save everything
+            return room
+
         # Check if user2 exists
         user2 = await self.db.execute(select(User).filter(User.id == user2_id))
         if not user2.scalar():
@@ -191,31 +232,76 @@ class RoomService:
         except Exception as e:
             raise InternalServerErrorException(detail="Failed to join room") from e
 
-    async def get_user_rooms(self, user_id: UUID) -> List[RoomResponse]:
+    async def get_user_rooms_with_details(self, user_id: UUID) -> List[RoomResponse]:
         """
-        Get all rooms a user is a member of.
-
-        Args:
-            user_id: ID of the user
-
-        Returns:
-            List of RoomResponse objects
+        Gets all rooms a user is a member of, enriched with member details
+        and the last message. This version uses a simple and direct two-query approach.
         """
-        rooms = await self.db.execute(
+        # Query 1: Get all rooms the user is in, and eagerly load member details.
+        rooms_query = (
             select(Room)
-            .join(RoomMembership)
-            .filter(RoomMembership.user_id == user_id)
-            .options(selectinload(Room.memberships))
-        )
-        rooms = rooms.scalars().all()
-
-        return [
-            RoomResponse(
-                id=room.id,
-                name=room.name,
-                room_type=room.room_type.value,
-                created_by=room.created_by,
-                created_at=room.created_at
+            .join(Room.memberships)
+            .where(RoomMembership.user_id == user_id)
+            .options(
+                selectinload(Room.memberships).selectinload(RoomMembership.user)
             )
-            for room in rooms
-        ]
+            .distinct()
+        )
+        result = await self.db.execute(rooms_query)
+        rooms = result.scalars().all()
+
+        if not rooms:
+            return []
+
+        room_ids = [room.id for room in rooms]
+
+        # Query 2: Get the last message for all of these rooms in a single, efficient query.
+        # This uses a window function, which is the most performant way to solve the "N+1" problem.
+        last_message_subquery = (
+            select(
+                Message,
+                func.row_number().over(
+                    partition_by=Message.room_id,
+                    order_by=Message.created_at.desc()
+                ).label("row_num")
+            )
+            .where(Message.room_id.in_(room_ids))
+            .subquery()
+        )
+
+        last_messages_query = select(last_message_subquery).where(last_message_subquery.c.row_num == 1)
+        
+        last_messages_result = await self.db.execute(last_messages_query)
+        # Create a simple dictionary for fast lookups: {room_id: message_object}
+        last_messages_map = {msg.room_id: msg for msg in last_messages_result.all()}
+
+        # Step 3: Combine the data in Python.
+        response_list = []
+        for room in rooms:
+            last_msg = last_messages_map.get(room.id)
+            response_list.append(
+                RoomResponse(
+                    id=room.id,
+                    name=room.name,
+                    room_type=room.room_type,
+                    created_by=room.created_by,
+                    created_at=room.created_at,
+                    members=[
+                        RoomMemberResponse(
+                            user_id=member.user.id,
+                            username=member.user.username
+                        ) for member in room.memberships
+                    ],
+                    last_message=last_msg.content if last_msg else None,
+                    last_message_timestamp=last_msg.created_at if last_msg else None
+                )
+            )
+    
+        return response_list
+    
+    async def get_room_member_ids(self, room_id: UUID) -> list[UUID]:
+        """Fetches a list of all user IDs in a given room."""
+        result = await self.db.execute(
+            select(RoomMembership.user_id).filter(RoomMembership.room_id == room_id)
+        )
+        return result.scalars().all()
