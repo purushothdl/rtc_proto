@@ -1,10 +1,9 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, Enum
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, Enum, func, select
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
-from sqlalchemy.orm import relationship
-from sqlalchemy.sql import func
+from sqlalchemy.orm import relationship, column_property
 from app.models.base import Base
 from app.schemas.room import RoomType
-
+from .message import Message
 
 class Room(Base):
     __tablename__ = "rooms"
@@ -14,7 +13,6 @@ class Room(Base):
     created_by = Column(PG_UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     
-    # Relationships
     messages = relationship("Message", back_populates="room")
     memberships = relationship("RoomMembership", back_populates="room")
     

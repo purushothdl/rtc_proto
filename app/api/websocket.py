@@ -1,273 +1,139 @@
-# app/api/websocket.py
-from fastapi import WebSocket, WebSocketDisconnect, Depends, HTTPException, status
-from fastapi.routing import APIRouter
-from sqlalchemy.ext.asyncio import AsyncSession
 import json
-import logging
-from typing import List, Optional
+from uuid import UUID
+from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect, status, HTTPException
 
-from app.database.postgres import get_db_session
-from app.dependencies.auth_dependencies import get_current_user_websocket
-from app.dependencies.service_dependencies import get_chat_service
-from app.utils.websocket_manager import websocket_manager
-from app.services.chat_service import ChatService
+from app.dependencies.auth_dependencies import get_current_user_from_websocket
+from app.dependencies.service_dependencies import get_chat_service, get_websocket_manager
 from app.models.user import User
+from app.core.log_config import logger
+from app.services.chat_service import ChatService
+from app.utils.websocket_manager import WebsocketManager
+from app.schemas.message import MessageCreateRequest, MessageType
 
-logger = logging.getLogger(__name__)
-router = APIRouter()
+router = APIRouter(prefix="/ws", tags=["websocket"])
 
-# You'll need to create this dependency for WebSocket auth
-async def get_current_user_websocket(
-    websocket: WebSocket,
-    token: Optional[str] = None
-) -> User:
-    """
-    WebSocket authentication dependency
-    Token can be passed as query parameter: ws://localhost:8000/ws?token=your_jwt_token
-    """
-    if not token:
-        token = websocket.query_params.get("token")
-    
-    if not token:
-        await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Authentication required")
-        raise HTTPException(status_code=401, detail="Authentication required")
-    
-    # Use your existing token validation logic here
-    # This is a placeholder - implement based on your auth system
-    try:
-        # Decode and validate token, return user
-        # user = await validate_token_and_get_user(token)
-        # return user
-        pass
-    except Exception as e:
-        await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Invalid token")
-        raise HTTPException(status_code=401, detail="Invalid token")
 
-def get_chat_service_websocket(db: AsyncSession = Depends(get_db_session)) -> ChatService:
-    """WebSocket-compatible chat service dependency"""
-    return ChatService(db)
-
-@router.websocket("/ws")
+@router.websocket("")
 async def websocket_endpoint(
     websocket: WebSocket,
-    user: User = Depends(get_current_user_websocket),
-    chat_service: ChatService = Depends(get_chat_service_websocket)
+    user: User = Depends(get_current_user_from_websocket),
+    manager: WebsocketManager = Depends(get_websocket_manager),
+    chat_service: ChatService = Depends(get_chat_service),
 ):
-    """
-    Main WebSocket endpoint for real-time chat
-    """
-    # Get user's rooms for initialization
-    # You'll need to implement this based on your room membership logic
-    user_rooms = []  # TODO: Get user's room IDs from database
-    
-    # Connect user
-    connection_id = await websocket_manager.connect(websocket, user, user_rooms)
-    
+    if user is None:
+        logger.warning("WebSocket connection rejected: invalid token provided.")
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Invalid token")
+        return
+
+    await manager.connect(websocket, user.id)
+    logger.info(f"User {user.username} ({user.id}) connected via WebSocket.")
+    joined_rooms = set()
+
     try:
         while True:
-            # Receive message from WebSocket
             data = await websocket.receive_text()
-            message_data = json.loads(data)
+            logger.debug(f"Data received from {user.username} ({user.id}): {data}")
             
-            # Handle different message types
-            await handle_websocket_message(message_data, user, chat_service)
-            
-    except WebSocketDisconnect:
-        logger.info(f"User {user.id} disconnected")
-    except Exception as e:
-        logger.error(f"WebSocket error for user {user.id}: {e}")
-    finally:
-        await websocket_manager.disconnect(user.id)
+            try:
+                message_data = json.loads(data)
+                msg_type = message_data.get("type")
+                if not msg_type:
+                    logger.warning(f"Message from {user.username} is missing 'type' field: {data}")
+                    continue
+            except json.JSONDecodeError:
+                logger.warning(f"Invalid JSON received from {user.username}: {data}")
+                continue
 
-async def handle_websocket_message(message_data: dict, user: User, chat_service: ChatService):
-    """
-    Handle different types of WebSocket messages
-    """
-    message_type = message_data.get("type")
-    data = message_data.get("data", {})
-    
-    try:
-        if message_type == "send_room_message":
-            await handle_room_message(data, user, chat_service)
-        
-        elif message_type == "send_private_message":
-            await handle_private_message(data, user, chat_service)
-        
-        elif message_type == "join_room":
-            await handle_join_room(data, user)
-        
-        elif message_type == "leave_room":
-            await handle_leave_room(data, user)
-        
-        elif message_type == "typing_start":
-            await handle_typing_indicator(data, user, True)
-        
-        elif message_type == "typing_stop":
-            await handle_typing_indicator(data, user, False)
-        
-        elif message_type == "ping":
-            await handle_ping(user)
-        
-        else:
-            logger.warning(f"Unknown message type: {message_type}")
-            await send_error_to_user(user.id, "Unknown message type")
-    
-    except Exception as e:
-        logger.error(f"Error handling WebSocket message: {e}")
-        await send_error_to_user(user.id, "Failed to process message")
+            if msg_type == "send_message":
+                content = message_data.get("content")
+                if not content:
+                    continue
 
-async def handle_room_message(data: dict, user: User, chat_service: ChatService):
-    """Handle room message sending"""
-    room_id = data.get("room_id")
-    content = data.get("content")
-    message_type = data.get("message_type", "text")
-    
-    if not room_id or not content:
-        await send_error_to_user(user.id, "Room ID and content are required")
-        return
-    
-    try:
-        result = await chat_service.send_message(user, room_id, content, message_type)
-        
-        # Send confirmation back to sender
-        confirmation = {
-            "type": "message_sent",
-            "data": {
-                "message_id": result["message_id"],
-                "room_id": room_id,
-                "status": result["status"]
-            }
-        }
-        await websocket_manager.send_personal_message(confirmation, user.id)
-        
-    except Exception as e:
-        await send_error_to_user(user.id, f"Failed to send room message: {str(e)}")
+                logger.info(f"Processing 'send_message' from {user.username}")
+                room_id_str = message_data.get("room_id")
+                target_user_id_str = message_data.get("target_user_id")
+                msg_type_enum = MessageType(message_data.get("message_type", "text"))
 
-async def handle_private_message(data: dict, user: User, chat_service: ChatService):
-    """Handle private message sending"""
-    recipient_id = data.get("recipient_id")
-    content = data.get("content")
-    message_type = data.get("message_type", "text")
-    
-    if not recipient_id or not content:
-        await send_error_to_user(user.id, "Recipient ID and content are required")
-        return
-    
-    try:
-        result = await chat_service.send_private_message(user, recipient_id, content, message_type)
-        
-        # Send confirmation back to sender
-        confirmation = {
-            "type": "private_message_sent",
-            "data": {
-                "message_id": result["message_id"],
-                "recipient_id": recipient_id,
-                "status": result["status"]
-            }
-        }
-        await websocket_manager.send_personal_message(confirmation, user.id)
-        
-    except Exception as e:
-        await send_error_to_user(user.id, f"Failed to send private message: {str(e)}")
+                try:
+                    if room_id_str:
+                        create_request = MessageCreateRequest(
+                            room_id=UUID(room_id_str), content=content, message_type=msg_type_enum
+                        )
+                        await chat_service.send_message(user, create_request)
+                    elif target_user_id_str:
+                        await chat_service.send_private_message(
+                            sender=user,
+                            target_user_id=UUID(target_user_id_str),
+                            content=content,
+                            message_type=msg_type_enum,
+                        )
+                except HTTPException as e:
+                    logger.warning(f"HTTPException while sending message for {user.username}: {e.detail}")
+                    error_payload = {"type": "error", "data": {"detail": e.detail, "status_code": e.status_code}}
+                    await websocket.send_text(json.dumps(error_payload))
 
-async def handle_join_room(data: dict, user: User):
-    """Handle user joining a room"""
-    room_id = data.get("room_id")
-    
-    if not room_id:
-        await send_error_to_user(user.id, "Room ID is required")
-        return
-    
-    try:
-        await websocket_manager.join_room(user.id, room_id)
-        
-        # Notify room members about new user
-        notification = {
-            "type": "user_joined",
-            "data": {
-                "room_id": room_id,
-                "user": {
-                    "id": user.id,
-                    "username": user.username
+            elif msg_type == "messages_delivered":
+                message_ids = [UUID(mid) for mid in message_data.get("message_ids", [])]
+                logger.debug(f"User {user.username} marked messages as delivered: {message_ids}")
+                if message_ids:
+                    await chat_service.mark_messages_as_delivered(message_ids, user.id)
+
+            elif msg_type == "messages_seen":
+                message_ids = [UUID(mid) for mid in message_data.get("message_ids", [])]
+                logger.debug(f"User {user.username} marked messages as seen: {message_ids}")
+                if message_ids:
+                    await chat_service.mark_messages_as_seen(message_ids, user.id)
+
+            elif msg_type == "join_room":
+                room_id = UUID(message_data.get("room_id"))
+                logger.info(f"User {user.username} joining room {room_id}")
+                await manager.join_room(user.id, room_id)
+                joined_rooms.add(room_id)
+                join_payload = {
+                    "type": "user_joined_room",
+                    "data": {"room_id": str(room_id), "user_id": str(user.id), "username": user.username},
                 }
-            }
-        }
-        await websocket_manager.send_room_message(notification, room_id, exclude_user_id=user.id)
-        
-        # Send confirmation to user
-        confirmation = {
-            "type": "room_joined",
-            "data": {"room_id": room_id}
-        }
-        await websocket_manager.send_personal_message(confirmation, user.id)
-        
-    except Exception as e:
-        await send_error_to_user(user.id, f"Failed to join room: {str(e)}")
+                await manager.broadcast_to_room(room_id, json.dumps(join_payload))
 
-async def handle_leave_room(data: dict, user: User):
-    """Handle user leaving a room"""
-    room_id = data.get("room_id")
-    
-    if not room_id:
-        await send_error_to_user(user.id, "Room ID is required")
-        return
-    
-    try:
-        await websocket_manager.leave_room(user.id, room_id)
-        
-        # Notify room members about user leaving
-        notification = {
-            "type": "user_left",
-            "data": {
-                "room_id": room_id,
-                "user": {
-                    "id": user.id,
-                    "username": user.username
+            elif msg_type == "leave_room":
+                room_id = UUID(message_data.get("room_id"))
+                if room_id in joined_rooms:
+                    logger.info(f"User {user.username} leaving room {room_id}")
+                    await manager.leave_room(user.id, room_id)
+                    joined_rooms.discard(room_id)
+                    leave_payload = {
+                        "type": "user_left_room",
+                        "data": {"room_id": str(room_id), "user_id": str(user.id), "username": user.username},
+                    }
+                    await manager.broadcast_to_room(room_id, json.dumps(leave_payload))
+
+            elif msg_type == "typing":
+                room_id = UUID(message_data.get("room_id"))
+                logger.debug(f"User {user.username} is typing in room {room_id}")
+                typing_payload = {
+                    "type": "typing_indicator",
+                    "data": {
+                        "room_id": str(room_id),
+                        "user_id": str(user.id),
+                        "username": user.username,
+                        "is_typing": message_data.get("is_typing", True),
+                    },
                 }
+                await manager.broadcast_to_room(room_id, json.dumps(typing_payload))
+
+    except WebSocketDisconnect as e:
+        logger.info(f"User {user.username} disconnected. Code: {e.code}, Reason: {e.reason}")
+        for room_id in joined_rooms:
+            await manager.leave_room(user.id, room_id)
+            leave_payload = {
+                "type": "user_left_room",
+                "data": {"room_id": str(room_id), "user_id": str(user.id), "username": user.username},
             }
-        }
-        await websocket_manager.send_room_message(notification, room_id, exclude_user_id=user.id)
-        
+            await manager.broadcast_to_room(room_id, json.dumps(leave_payload))
+        await manager.disconnect(user.id)
+
     except Exception as e:
-        await send_error_to_user(user.id, f"Failed to leave room: {str(e)}")
-
-async def handle_typing_indicator(data: dict, user: User, is_typing: bool):
-    """Handle typing indicators"""
-    room_id = data.get("room_id")
-    recipient_id = data.get("recipient_id")
-    
-    typing_message = {
-        "type": "typing_indicator",
-        "data": {
-            "user": {
-                "id": user.id,
-                "username": user.username
-            },
-            "is_typing": is_typing,
-            "room_id": room_id,
-            "recipient_id": recipient_id
-        }
-    }
-    
-    if room_id:
-        # Send to room
-        await websocket_manager.send_room_message(typing_message, room_id, exclude_user_id=user.id)
-    elif recipient_id:
-        # Send to specific user
-        await websocket_manager.send_personal_message(typing_message, recipient_id)
-
-async def handle_ping(user: User):
-    """Handle ping for connection health check"""
-    pong_message = {
-        "type": "pong",
-        "data": {"timestamp": __import__('time').time()}
-    }
-    await websocket_manager.send_personal_message(pong_message, user.id)
-
-async def send_error_to_user(user_id: int, error_message: str):
-    """Send error message to user"""
-    error_msg = {
-        "type": "error",
-        "data": {"message": error_message}
-    }
-    await websocket_manager.send_personal_message(error_msg, user_id)
+        logger.error(f"An unhandled error occurred in websocket for {user.username} ({user.id}): {e}", exc_info=True)
+        for room_id in joined_rooms:
+            await manager.leave_room(user.id, room_id)
+        await manager.disconnect(user.id)
