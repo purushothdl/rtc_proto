@@ -1,5 +1,6 @@
 .env
 front_end/.env.example
+front_end/config.js
 venv/
 logs/
 

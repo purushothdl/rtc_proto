@@ -1,17 +1,19 @@
+import config from './config.js';
+
 // --- CONFIGURATION ---
 // Dynamically get the current host (e.g., 192.168.1.42)
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
-const WEBSOCKET_URL = import.meta.env.VITE_WEBSOCKET_URL;
+const API_BASE_URL = config.API_BASE_URL;
+const WEBSOCKET_URL = config.WEBSOCKET_URL;
 
 const firebaseConfig = {
-    apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
-    authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
-    projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
-    storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
-    messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-    appId: import.meta.env.VITE_FIREBASE_APP_ID,
+    apiKey: config.FIREBASE_API_KEY,
+    authDomain: config.FIREBASE_AUTH_DOMAIN,
+    projectId: config.FIREBASE_PROJECT_ID,
+    storageBucket: config.FIREBASE_STORAGE_BUCKET,
+    messagingSenderId: config.FIREBASE_MESSAGING_SENDER_ID,
+    appId: config.FIREBASE_APP_ID,
 };
-const VAPID_KEY = import.meta.env.VITE_FIREBASE_VAPID_KEY;
+const VAPID_KEY = config.FIREBASE_VAPID_KEY;
 
 // --- GLOBAL STATE ---
 let state = {
