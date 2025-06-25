@@ -1,19 +1,17 @@
 // --- CONFIGURATION ---
 // Dynamically get the current host (e.g., 192.168.1.42)
-const host = "5626-117-192-57-3.ngrok-free.app";
-
-const API_BASE_URL = 'https://5626-117-192-57-3.ngrok-free.app';
-const WEBSOCKET_URL = 'wss://5626-117-192-57-3.ngrok-free.app/ws';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
+const WEBSOCKET_URL = import.meta.env.VITE_WEBSOCKET_URL;
 
 const firebaseConfig = {
-    apiKey: "AIzaSyBGp0cBHgNjF_a6CGRSP9jxetqNYCGiDWI",
-    authDomain: "notifications-6fcca.firebaseapp.com",
-    projectId: "notifications-6fcca",
-    storageBucket: "notifications-6fcca.appspot.com",
-    messagingSenderId: "244945588960",
-    appId: "1:244945588960:web:b0762ccfe84478a01c7685"
+    apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+    authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+    projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+    storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+    messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+    appId: import.meta.env.VITE_FIREBASE_APP_ID,
 };
-const VAPID_KEY = "BB1umEaP1YwKdXOqwd3nahCcLqJ1halGVVcKmHQrNFJ5RDXAbvARV6Fui9fNzYrOfKG4P_gRTYKxi7UFCidCcHo";
+const VAPID_KEY = import.meta.env.VITE_FIREBASE_VAPID_KEY;
 
 // --- GLOBAL STATE ---
 let state = {

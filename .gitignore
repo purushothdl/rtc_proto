@@ -1,4 +1,5 @@
 .env
+front_end/.env.example
 venv/
 logs/
 
