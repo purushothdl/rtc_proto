@@ -8,6 +8,20 @@
 
 This project is a minimal viable product (MVP) for a real-time communication platform built using FastAPI, PostgreSQL, Redis, and WebSockets. The architecture is designed to support real-time messaging, room management, and user authentication.
 
+## Demo
+
+### Login Page
+![Login Page](demo/login.png)
+
+### Home Page
+![Home Page](demo/home.png)
+
+### Direct Message (DM) Page
+![Direct Message Page](demo/dm.png)
+
+### Push Notification
+![Push Notification](demo/push_notif.png)
+
 ## Architecture Overview
 
 The project follows a modular structure with the following key components:
@@ -80,6 +94,8 @@ The project follows a modular structure with the following key components:
 
 ### API Documentation
 Once the application is running, you can access the interactive API documentation at `http://localhost:8000/docs`.
+
+
 
 
 
