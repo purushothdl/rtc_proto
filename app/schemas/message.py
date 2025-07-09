@@ -9,14 +9,22 @@ class MessageStatus(str, Enum):
     DELIVERED = "delivered"
     SEEN = "seen"
 
+class MessageType(str, Enum):
+    TEXT = "text"
+    IMAGE = "image"
+    FILE = "file"
+    VIDEO = "video"
+
 class MessageCreateRequest(BaseModel):
     room_id: UUID = Field(..., description="ID of the room where the message is sent")
     content: str = Field(..., min_length=1, max_length=2000, description="Message content")
-    message_type: Literal["text"] = Field(default="text", description="Type of message")
+    message_type: MessageType = Field(default=MessageType.TEXT, description="Type of message")
+
 class PrivateMessageCreateRequest(BaseModel):
     target_user_id: UUID = Field(..., description="ID of the recipient")
     content: str = Field(..., min_length=1, max_length=2000)
-    message_type: Literal["text"] = Field(default="text")
+    message_type: MessageType = Field(default=MessageType.TEXT)
+
 class MessageResponse(BaseModel):
     id: UUID
     room_id: UUID
@@ -24,8 +32,11 @@ class MessageResponse(BaseModel):
     sender_username: str
     sender_display_name: str
     content: str
-    status: Literal["sent", "delivered", "seen"]
+    status: MessageStatus
     timestamp: datetime
+    message_type: MessageType
+    is_edited: bool
+    is_deleted: bool
 
     class Config:
         from_attributes = True

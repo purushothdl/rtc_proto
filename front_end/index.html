@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chat App</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="app-container">
+    <!-- Login View -->
+    <div id="auth-view" class="view">
+        <div class="login-card">
+            <h2>Chat Login</h2>
+            <form id="login-form">
+                <div class="input-group">
+                    <i class="fas fa-user"></i>
+                    <input type="text" id="username" placeholder="Username" required>
+                </div>
+                <div class="input-group">
+                    <i class="fas fa-lock"></i>
+                    <input type="password" id="password" placeholder="Password" required>
+                </div>
+                <button type="submit" class="btn-primary">Login</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Main Chat View -->
+    <div id="chat-view" class="view">
+        <div class="sidebar">
+            <div class="sidebar-header">
+                <h3>Chats</h3>
+                <div class="sidebar-actions">
+                    <button id="permission-btn" title="Enable Notifications"><i class="fas fa-bell"></i></button>
+                    <button id="logout-btn" title="Logout"><i class="fas fa-sign-out-alt"></i></button>
+                </div>
+            </div>
+            <ul id="rooms-list" class="rooms-list"></ul>
+        </div>
+        <div class="chat-area">
+            <div class="chat-header">
+                <h3 id="current-room-name">Select a conversation</h3>
+            </div>
+            <div id="messages" class="messages-container">
+                <!-- Messages will be dynamically added here -->
+                 <div class="welcome-message">
+                    <i class="fas fa-comments"></i>
+                    <p>Select a room to start chatting!</p>
+                </div>
+            </div>
+            <div class="message-input-area">
+                <form id="message-form">
+                    <input type="text" id="message-input" placeholder="Type a message..." autocomplete="off" disabled>
+                    <button type="submit" id="send-btn" class="send-btn" disabled><i class="fas fa-paper-plane"></i></button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Firebase SDKs - We only need the app module here -->
+<script type="module" src="app.js"></script>
+
+</body>
+</html>

@@ -89,15 +89,7 @@ async def get_user_rooms(
     room_service: RoomService = Depends(get_room_service)
 ):
     """
-    Get all rooms the user is a member of.
-
-    Args:
-        current_user: Authenticated user details
-        room_service: Room service instance
-
-    Returns:
-        List of RoomResponse objects
+    Gets all rooms the user is a member of, including member details
+    and the last message.
     """
-    return await room_service.get_user_rooms(
-        user_id=current_user.id
-    )
+    return await room_service.get_user_rooms_with_details(current_user.id)

@@ -1,4 +1,6 @@
 .env
+front_end/.env.example
+front_end/config.js
 venv/
 logs/
 
@@ -28,3 +30,5 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+
+service_account_key.json
