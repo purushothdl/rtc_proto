@@ -183,6 +183,7 @@ function sortAndRenderRooms() {
 function renderRooms() {
     roomsList.innerHTML = '';
     state.rooms.forEach(room => {
+        // ... (li, avatar, info, name elements created as before)
         const li = document.createElement('li');
         li.className = 'room-item';
         if (room.id === state.currentRoomId) li.classList.add('active');
@@ -204,8 +205,24 @@ function renderRooms() {
 
         info.appendChild(name);
         info.appendChild(lastMsg);
+        
+        // --- NEW: Create and append the metadata container (for timestamp and badge) ---
+        const meta = document.createElement('div');
+        meta.className = 'room-meta';
+        
+        const timestamp = new Date(room.last_message_timestamp || room.created_at);
+        meta.innerHTML = `<span class="last-message-time">${timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>`;
+        
+        if (room.unread_count > 0) {
+            const badge = document.createElement('span');
+            badge.className = 'unread-badge';
+            badge.textContent = room.unread_count;
+            meta.appendChild(badge);
+        }
+
         li.appendChild(avatar);
         li.appendChild(info);
+        li.appendChild(meta); // Add the meta container to the list item
         roomsList.appendChild(li);
     });
 }

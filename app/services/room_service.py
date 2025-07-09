@@ -4,6 +4,8 @@ from sqlalchemy import select, and_, func, distinct
 from sqlalchemy.orm import selectinload
 from typing import List
 from sqlalchemy.orm import contains_eager
+
+from app.schemas.message import MessageStatus
 from ..models.message import Message
 from ..models.room import Room, RoomType
 from ..models.room_membership import RoomMembership
@@ -232,19 +234,18 @@ class RoomService:
         except Exception as e:
             raise InternalServerErrorException(detail="Failed to join room") from e
 
+
     async def get_user_rooms_with_details(self, user_id: UUID) -> List[RoomResponse]:
         """
-        Gets all rooms a user is a member of, enriched with member details
-        and the last message. This version uses a simple and direct two-query approach.
+        Gets all rooms a user is a member of, enriched with member details,
+        the last message, and the count of unread messages.
         """
-        # Query 1: Get all rooms the user is in, and eagerly load member details.
+        # Query 1: Get rooms and members (no change here)
         rooms_query = (
             select(Room)
             .join(Room.memberships)
             .where(RoomMembership.user_id == user_id)
-            .options(
-                selectinload(Room.memberships).selectinload(RoomMembership.user)
-            )
+            .options(selectinload(Room.memberships).selectinload(RoomMembership.user))
             .distinct()
         )
         result = await self.db.execute(rooms_query)
@@ -255,30 +256,41 @@ class RoomService:
 
         room_ids = [room.id for room in rooms]
 
-        # Query 2: Get the last message for all of these rooms in a single, efficient query.
-        # This uses a window function, which is the most performant way to solve the "N+1" problem.
+        # Query 2: Get last messages (no change here)
         last_message_subquery = (
-            select(
-                Message,
-                func.row_number().over(
-                    partition_by=Message.room_id,
-                    order_by=Message.created_at.desc()
-                ).label("row_num")
-            )
+            select(Message, func.row_number().over(
+                partition_by=Message.room_id,
+                order_by=Message.created_at.desc()
+            ).label("row_num"))
             .where(Message.room_id.in_(room_ids))
             .subquery()
         )
-
         last_messages_query = select(last_message_subquery).where(last_message_subquery.c.row_num == 1)
-        
         last_messages_result = await self.db.execute(last_messages_query)
-        # Create a simple dictionary for fast lookups: {room_id: message_object}
         last_messages_map = {msg.room_id: msg for msg in last_messages_result.all()}
 
-        # Step 3: Combine the data in Python.
+        # --- NEW QUERY 3: Get unread counts for all rooms at once ---
+        unread_counts_query = (
+            select(
+                Message.room_id,
+                func.count(Message.id).label("unread_count")
+            )
+            .where(
+                Message.room_id.in_(room_ids),
+                Message.sender_id != user_id,
+                Message.status != MessageStatus.SEEN
+            )
+            .group_by(Message.room_id)
+        )
+        unread_counts_result = await self.db.execute(unread_counts_query)
+        # Create a dictionary for fast lookups: {room_id: count}
+        unread_counts_map = {room_id: count for room_id, count in unread_counts_result.all()}
+
+        # Combine all data in Python
         response_list = []
         for room in rooms:
             last_msg = last_messages_map.get(room.id)
+            unread_count = unread_counts_map.get(room.id, 0) # Default to 0 if no unread messages
             response_list.append(
                 RoomResponse(
                     id=room.id,
@@ -293,10 +305,11 @@ class RoomService:
                         ) for member in room.memberships
                     ],
                     last_message=last_msg.content if last_msg else None,
-                    last_message_timestamp=last_msg.created_at if last_msg else None
+                    last_message_timestamp=last_msg.created_at if last_msg else None,
+                    unread_count=unread_count # Pass the count to the response
                 )
             )
-    
+        
         return response_list
     
     async def get_room_member_ids(self, room_id: UUID) -> list[UUID]:
